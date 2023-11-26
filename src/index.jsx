@@ -23,6 +23,19 @@ Other info :
     As a result, they should defniitely useState to keep track of data, so maybe an object of id : content pairs for all the mentions.
     Clauses have no styling, mentions only have colour styling.
 */
+const data = jsonData;
+const initialMentions = {}
+const extractMentions = (items) => {  // pre-process the mentions so we don't have to re-render inside backtracking funciton.
+    if (Array.isArray(items)) {
+      items.forEach(item => extractMentions(item));
+    } else if (items.type === "mention") {
+        initialMentions[items.title] = items.children[0].text;
+    } else if (items.children) {
+      extractMentions(items.children);
+    }
+  };
+
+extractMentions(data[0]);
 
 function Mention({marks,mentions,id,color}){
     return(
@@ -33,12 +46,11 @@ function Mention({marks,mentions,id,color}){
 function Clause({marks,index,children}){
     return(
         // cuz of backtracking we've got the children, so we just need the first bullet point and styling.
-        <ol style={{fontWeight:marks.fontWeight, fontStyle:marks.fontStyle, textDecoration:marks.textDecoration}}>
-            {index}.
-            <div>{children}</div>
-        </ol>  
-        // ik it says doesn't behave necessarily like an <ol>, but I'm not sure how to do it otherwise.
-        // also not sure how to format the index -> children part
+        <div style={{display:'flex', alignItems:'baseline', fontWeight:marks.fontWeight, fontStyle:marks.fontStyle, textDecoration:marks.textDecoration}}>
+            <span><pre>{index} </pre></span> 
+            <div style={{flex:1}}> {children}</div>
+        </div>  
+        // used flexbox to align the bullet points w the text here. Wanted to use useRef for the optional part of the test, but couldn't figure out how to include it in the next tag.
     )
 }
 
@@ -50,12 +62,13 @@ export default function Agreement(){
     // Base case is when there are no children (text exists as a key in the object), then we just render the text with styling.
     
     // decalare ref to keep track of clauses
-    const clauseIndex = React.useRef(0); // start at 0, incremenet before each Clause call, so first clause is 1.
-    const [mentions,setMentions] = React.useState({}) // initial state is empty object. Will be filled over time.
-    const data = jsonData;
+    const clauseIndex = React.useRef(0); // start at 0, increment before each Clause call, so first clause is 1.
+    // Not really sure if this is what was intended, but I used this for the optional part
+    const [mentions,setMentions] = React.useState(initialMentions) // initial state is empty object. Will be filled over time.
+    // setMentions isn't used in the code, but in accordance with the description, updating the "mentions" object (however that is chosen to be implemented) should trigger a re-render, replacing all necessary parts.
 
     const backtrack = (items) => {
-        if (Array.isArray(items)) { // if item is an array (inside the children element or initial element) go thru each object.
+        if (Array.isArray(items)) { // if item is an array (inside the children element or initial element) go thru each object and call.
             return items.map((item) => backtrack(item));
         }
         const marks = {   // object that'll hold the optional marks. Check if they're true, then add them to the style.
@@ -63,28 +76,54 @@ export default function Agreement(){
             fontStyle: items.italic ? 'italic' : 'normal',
             textDecoration: items.underline ? 'underline' : 'none',
         };
+        if (!("type" in items)) { // the base case, should stop here.
+            // split text on newline char to find the \n's.
+            const textParts = items.text.split('\n').map((part, index, array) => (
+              <React.Fragment key={index}>
+                {part}
+                {index < array.length - 1 && <br />}
+              </React.Fragment>
+            ));
         
-        if (items.type === "mention"){
-            const newMentions = {...mentions};  // add to state of all the mentions.... pass thru state for re-rendering when necessary
-            newMentions[items.title] = items.children[0].text;
-            setMentions(newMentions);
-            return <Mention marks={marks} mentions={mentions} color={items.color} id={items.title}/> // passing prop leads to re-render when necessary.
-            // shouldnt need other styling, no other besides color in json, but just in case.
+            return (
+              <span key={items.title || 'p-' + Math.random()} style={{ fontWeight: marks.fontWeight, fontStyle: marks.fontStyle, textDecoration: marks.textDecoration }}>
+                {textParts}
+              </span> // not too sure on span tags because in some cases they might appear nested which is unnecessary, but not sure how else to do.
+            );
+        }
+        else if (items.type === "mention"){  // pass state as prop for potential future re-rendering.
+            return <Mention key={items.title || 'p-' + Math.random()} marks={marks} mentions={mentions} color={items.color} id={items.title}/> 
+            // shouldnt need other styling (marks), no other besides colour in the json, but just in case.
         }
         else if (items.type === "clause"){
-            clauseIndex.current += 1;   // increment clause index.
-            return <Clause marks={marks} index={clauseIndex.current}>{items.children && backtrack(items.children)}</Clause>
+            clauseIndex.current += 1;   // increment clause index ref.
+            return <Clause key={items.title || 'p-' + Math.random()} marks={marks} index={clauseIndex.current}>{items.children && backtrack(items.children)}</Clause>
         }
-        else if (items.type==="text"){  // the base case, should stop here.
-            return <span style={{fontWeight:marks.fontWeight, fontStyle:marks.fontStyle, textDecoration:marks.textDecoration}}>{items.text}</span> 
-            // should probably be returning without span tag cuz might lead to span nests, but seems helpful for indiviudal styling...
-        }
-        else{
-            const Tag = items.type === 'lic' ? 'span' : items.type; // replace 'lic' with 'span' cuz it seems to just be text.
+
+        // had some issues with nested <p> tags here, so replacing all non-leaf <p> tags with <div> tags.
+        // also replacing leaf <p> tags with <span> tags to avoid unnecessary newlining.
+        else if (items.type === "p") { 
+            if ("children" in items){
+                return (
+                    <div key={items.title || 'p-' + Math.random()}>
+                        {items.children && backtrack(items.children)}
+                    </div>
+                );
+            }
+            else{
+                return (
+                    <span key={items.title || 'p-' + Math.random()}>
+                        {items.text}
+                    </span>
+                )
+            }
+          }
+        else{ // if not one of the above, create the relevant tag. Change "lic" to "span" and "block" to "div"
+            const Tag = items.type === 'lic' ? 'span' : (items.type === 'block' ? 'div' : items.type); // Replace 'lic' with 'span', and 'block' with 'div'
             return (
-              <Tag style={{fontWeight:marks.fontWeight, fontStyle:marks.fontStyle, textDecoration:marks.textDecoration}}>
+            <Tag  key={items.title || 'p-' + Math.random()} style={{fontWeight: marks.fontWeight, fontStyle: marks.fontStyle, textDecoration: marks.textDecoration}}>
                 {items.children && backtrack(items.children)}
-              </Tag>
+            </Tag>
             );
         }
         
